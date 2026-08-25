@@ -300,6 +300,22 @@ footer {
 #proxyChip, #errChip { border-color: rgba(245,158,11,0.5); color: var(--amber); }
 .hidden { display: none !important; }
 
+/* ---------- 地图与WiFi ---------- */
+#mapCanvas, #connCanvas { width: 100%; display: block; }
+.geo-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.advice {
+  font-size: 14px;
+  line-height: 1.8;
+}
+.advice.text-red { color: var(--red); }
+.advice.text-amber { color: var(--amber); }
+.advice.text-green { color: var(--green); }
+
 @media (max-width: 900px) {
   .panels { grid-template-columns: 1fr; }
   header { flex-wrap: wrap; }

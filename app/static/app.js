@@ -332,7 +332,7 @@ async function loadProcs() {
         <td>${esc(p.proc)}</td><td>${p.pid}</td>
         <td class="${stormCls}"><b>${p.estab}</b></td><td>${p.listen}</td>
         <td class="${p.new_per_min >= 60 ? "text-red" : ""}">${p.new_per_min || 0}</td>
-        <td class="mono small">${esc(p.top_remotes.join(", ")) || "-"}</td></tr>`);
+        <td class="mono small">${esc((p.top_remotes || []).map(r => r.ip + (r.count > 1 ? "×" + r.count : "")).join(", ")) || "-"}</td></tr>`);
     }
     const sl = $("stormList");
     sl.innerHTML = "";
@@ -350,6 +350,8 @@ const tabTimers = {
   netdetail: [[loadNetInfo, 30000], [renderDnsStats, 5000]],
   path: [[loadTrace, 10000]],
   procs: [[loadProcs, 3000]],
+  map: [[loadMapData, 5000], [loadConnData, 3000]],
+  wifi: [[loadWifiEnv, 15000]],
 };
 let runningTimers = [];
 
@@ -371,6 +373,439 @@ function activateTab(name) {
 document.querySelectorAll(".tab").forEach(btn =>
   btn.addEventListener("click", () => activateTab(btn.dataset.tab)));
 
+/* ================= 网络地图 ================= */
+const geoCache = {};
+let lastSnap = null;
+let lastGeoReq = 0;
+const mapGraph = { nodes: [], edges: [] };
+
+function fitCanvas(cv) {
+  const cssW = cv.clientWidth || 800;
+  const cssH = parseInt(cv.getAttribute("height"), 10) || 400;
+  const dpr = window.devicePixelRatio || 1;
+  if (cv.width !== Math.round(cssW * dpr) || cv.height !== Math.round(cssH * dpr)) {
+    cv.width = Math.round(cssW * dpr);
+    cv.height = Math.round(cssH * dpr);
+  }
+  const ctx = cv.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { ctx, w: cssW, h: cssH };
+}
+
+const edgeColor = ms => ms == null ? "#ef4444" : ms < 100 ? "#22c55e" : ms < 300 ? "#f59e0b" : "#ef4444";
+
+function mkNode(id, x, y, title, sub, ms) {
+  return { id, x, y, title, sub, ms };
+}
+
+function buildGraph(trace, dnsStats) {
+  const cv = $("mapCanvas");
+  const W = cv.clientWidth || 900;
+  const H = parseInt(cv.getAttribute("height"), 10) || 400;
+  const midY = H * 0.46;
+  const nodes = [], edges = [];
+  let x = 80;
+
+  const me = mkNode("me", x, midY, "本机", lastSnap ? lastSnap.nic : "");
+  nodes.push(me); x += 150;
+
+  let fan = me;
+  if (lastSnap && lastSnap.proxy) {
+    const px = mkNode("proxy", x, midY, "代理隧道", "Clash TUN");
+    nodes.push(px);
+    edges.push(mkEdge(me, px, lastSnap.latency, false));
+    fan = px; x += 150;
+  }
+
+  const gwMs = lastSnap ? lastSnap.gateway_ms : null;
+  const gw = mkNode("gw", x, midY, lastSnap ? (lastSnap.gateway || "网关") : "网关",
+    gwMs != null ? gwMs.toFixed(0) + "ms" : "无响应", gwMs);
+  nodes.push(gw);
+  edges.push(mkEdge(fan, gw, gwMs, false));
+  x += 130;
+
+  const hops = (trace && trace.hops ? trace.hops.slice(1) : []).slice(0, 6);
+  const spanW = Math.max(120, W - x - 220);
+  hops.forEach((h, i) => {
+    const hx = x + (spanW * (i + 1)) / (hops.length + 1);
+    const hy = midY + (i % 2 === 0 ? -26 : 26);
+    const hn = mkNode("hop" + i, hx, hy, h.ip, h.avg != null ? h.avg.toFixed(0) + "ms" : "超时",
+      h.loss >= 2 ? null : h.avg);
+    hn.small = true;
+    nodes.push(hn);
+    edges.push(mkEdge(nodes[nodes.length - 2], hn, h.avg, false));
+  });
+
+  const target = mkNode("target", W - 90, midY,
+    trace ? trace.target : "223.5.5.5", "探测目标",
+    lastSnap ? lastSnap.latency : null);
+  target.accent = true;
+  nodes.push(target);
+  const chainTail = hops.length ? nodes[nodes.length - 2] : gw;
+  edges.push(mkEdge(chainTail, target, lastSnap ? lastSnap.latency : null, false));
+
+  const dnsServers = Object.keys(dnsStats || {}).slice(0, 4);
+  const dnsY = 52;
+  dnsServers.forEach((srv, i) => {
+    const dx = 260 + ((W - 380) * (i + 0.5)) / Math.max(1, dnsServers.length);
+    const st = dnsStats[srv];
+    const dn = mkNode("dns" + i, dx, dnsY, srv,
+      st.avg_ms != null ? st.avg_ms.toFixed(0) + "ms · " + (st.ok_pct ?? "?") + "%" : "异常",
+      st.ok_pct >= 50 ? st.avg_ms : null);
+    dn.small = true;
+    nodes.push(dn);
+    edges.push(mkEdge(gw, dn, st.avg_ms, true));
+  });
+
+  const probes = (lastSnap ? lastSnap.probes : []).filter(p => p.name !== "阿里DNS"
+    && p.name !== "114DNS" && p.name !== "谷歌DNS").slice(0, 6);
+  const pbY = H - 48;
+  probes.forEach((p, i) => {
+    const px2 = 240 + ((W - 360) * (i + 0.5)) / Math.max(1, probes.length);
+    const pn = mkNode("pb" + i, px2, pbY, p.name,
+      p.ms != null ? p.ms.toFixed(0) + "ms" : "超时", p.ms);
+    pn.small = true;
+    nodes.push(pn);
+    edges.push(mkEdge(target, pn, p.ms, true));
+  });
+
+  mapGraph.nodes = nodes;
+  mapGraph.edges = edges;
+}
+
+function mkEdge(a, b, ms, dashed) {
+  return {
+    a, b, ms, dashed,
+    parts: [],
+    nextSpawn: 0,
+    dur: () => 700 + Math.min(ms == null ? 400 : ms, 500) * 3,
+  };
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function drawNode(ctx, n) {
+  const w = n.small ? 96 : 118, h = 42;
+  const border = n.ms === undefined ? "#38bdf8"
+    : n.ms == null ? "#ef4444" : edgeColor(n.ms);
+  ctx.save();
+  ctx.fillStyle = "#16233b";
+  ctx.strokeStyle = n.accent ? "#38bdf8" : border;
+  ctx.lineWidth = n.accent ? 2 : 1.4;
+  roundRect(ctx, n.x - w / 2, n.y - h / 2, w, h, 9);
+  ctx.fill(); ctx.stroke();
+  ctx.fillStyle = "#e2e8f0";
+  ctx.font = "bold 11px 'Segoe UI','Microsoft YaHei'";
+  ctx.textAlign = "center";
+  const t = n.title.length > 15 ? n.title.slice(0, 14) + "…" : n.title;
+  ctx.fillText(t, n.x, n.y - 3);
+  ctx.fillStyle = "#94a3b8";
+  ctx.font = "10px 'Segoe UI','Microsoft YaHei'";
+  ctx.fillText(n.sub || "", n.x, n.y + 12);
+  ctx.restore();
+}
+
+function drawEdge(ctx, e, now) {
+  const col = edgeColor(e.ms);
+  ctx.save();
+  ctx.strokeStyle = col;
+  ctx.globalAlpha = 0.55;
+  ctx.lineWidth = 1.4;
+  if (e.dashed) ctx.setLineDash([5, 5]);
+  ctx.beginPath();
+  ctx.moveTo(e.a.x, e.a.y);
+  ctx.lineTo(e.b.x, e.b.y);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.globalAlpha = 1;
+
+  if (now >= e.nextSpawn) {
+    e.parts.push({ t0: now });
+    e.nextSpawn = now + e.dur() * 0.55;
+  }
+  const dur = e.dur();
+  e.parts = e.parts.filter(p => now - p.t0 < dur);
+  for (const p of e.parts) {
+    const k = (now - p.t0) / dur;
+    const x1 = e.a.x + (e.b.x - e.a.x) * k, y1 = e.a.y + (e.b.y - e.a.y) * k;
+    const x2 = e.b.x + (e.a.x - e.b.x) * ((k + 0.5) % 1),
+          y2 = e.b.y + (e.a.y - e.b.y) * ((k + 0.5) % 1);
+    for (const [px, py, c] of [[x1, y1, "#7dd3fc"], [x2, y2, "#a5f3fc"]]) {
+      ctx.fillStyle = c;
+      ctx.shadowColor = c;
+      ctx.shadowBlur = 6;
+      ctx.beginPath();
+      ctx.arc(px, py, 2.4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    }
+  }
+  if (e.ms != null) {
+    ctx.fillStyle = "#94a3b8";
+    ctx.font = "10px Consolas";
+    ctx.textAlign = "center";
+    ctx.fillText(Math.round(e.ms) + "ms", (e.a.x + e.b.x) / 2, (e.a.y + e.b.y) / 2 - 6);
+  }
+  ctx.restore();
+}
+
+function drawMap(now) {
+  const cv = $("mapCanvas");
+  const { ctx } = fitCanvas(cv);
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  for (const e of mapGraph.edges) drawEdge(ctx, e, now);
+  for (const n of mapGraph.nodes) drawNode(ctx, n);
+}
+
+(function loop(ts) {
+  requestAnimationFrame(loop);
+  const page = document.getElementById("tab-map");
+  if (!page || !page.classList.contains("active")) return;
+  drawMap(ts || 0);
+})(0);
+
+async function loadMapData() {
+  try {
+    const [tr, ds] = await Promise.all([
+      fetch("/api/traceroute").then(r => r.json()),
+      fetch("/api/dns-stats").then(r => r.json()),
+    ]);
+    buildGraph(tr.latest, ds);
+    $("mapMeta").textContent = tr.latest
+      ? "路径更新于 " + fmtTime(tr.latest.ts * 1000) : "等待首次路径探测…";
+  } catch (e) { /* retry */ }
+}
+
+/* ---------- 连接星图 ---------- */
+const isPublicIpJs = ip => /^\d{1,3}(\.\d{1,3}){3}$/.test(ip)
+  && !/^(10\.|192\.168\.|127\.|169\.254\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|198\.1[89]\.|26\.|0\.)/.test(ip);
+
+async function loadConnData() {
+  try {
+    const r = await fetch("/api/connections");
+    const d = await r.json();
+    renderConnCanvas(d.processes || []);
+    requestGeoBatch(d.processes || []);
+    $("connMeta").textContent = "更新于 " + fmtTime(Date.now());
+  } catch (e) { /* retry */ }
+}
+
+function requestGeoBatch(procs) {
+  const ips = new Set();
+  for (const p of procs.slice(0, 8))
+    for (const r of p.top_remotes || [])
+      if (isPublicIpJs(r.ip)) ips.add(r.ip);
+  const missing = [...ips].filter(ip => !(ip in geoCache));
+  if (!missing.length) return;
+  const now = Date.now();
+  if (now - lastGeoReq < 10000) return;
+  lastGeoReq = now;
+  fetch("/api/geo", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(missing.slice(0, 40)),
+  }).then(r => r.json()).then(res => {
+    Object.assign(geoCache, res || {});
+    renderConnMeta();
+  }).catch(() => {});
+}
+
+function renderConnMeta() {
+  const box = $("geoLegend");
+  const countries = {};
+  for (const [, g] of Object.entries(geoCache))
+    if (g && g.country) countries[g.country] = (countries[g.country] || 0) + 1;
+  box.innerHTML = Object.entries(countries).sort((a, b) => b[1] - a[1])
+    .slice(0, 8).map(([c, n]) => `<span class="chip-line">${esc(c)} × ${n}</span>`).join("");
+}
+
+function renderConnCanvas(procs) {
+  const cv = $("connCanvas");
+  const { ctx, w, h } = fitCanvas(cv);
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  const cx = w / 2, cy = h / 2;
+  const list = procs.filter(p => p.estab > 0)
+    .sort((a, b) => b.estab - a.estab).slice(0, 8);
+  if (!list.length) {
+    ctx.fillStyle = "#94a3b8";
+    ctx.font = "13px 'Microsoft YaHei'";
+    ctx.textAlign = "center";
+    ctx.fillText("暂无对外连接", cx, cy);
+    return;
+  }
+  const R1 = Math.min(w, h) * 0.27, R2 = Math.min(w, h) * 0.44;
+
+  ctx.save();
+  ctx.fillStyle = "#16233b";
+  ctx.strokeStyle = "#38bdf8";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(cx, cy, 34, 0, Math.PI * 2);
+  ctx.fill(); ctx.stroke();
+  ctx.fillStyle = "#e2e8f0";
+  ctx.font = "bold 13px 'Microsoft YaHei'";
+  ctx.textAlign = "center";
+  ctx.fillText("本机", cx, cy + 4);
+  ctx.restore();
+
+  list.forEach((p, i) => {
+    const ang = (Math.PI * 2 * i) / list.length - Math.PI / 2;
+    const px = cx + R1 * Math.cos(ang), py = cy + R1 * Math.sin(ang);
+    const pr = Math.min(26, 7 + Math.sqrt(p.estab) * 2.6);
+    const hot = (p.new_per_min || 0) >= 60;
+
+    (p.top_remotes || []).slice(0, 4).forEach((rm, j) => {
+      const spread = 0.5;
+      const rang = ang + (j - 1.5) * (spread / 2);
+      const rx = cx + R2 * Math.cos(rang), ry = cy + R2 * Math.sin(rang);
+      const g = geoCache[rm.ip];
+      ctx.save();
+      ctx.strokeStyle = hot ? "rgba(239,68,68,0.5)" : "rgba(56,189,248,0.35)";
+      ctx.lineWidth = Math.min(4, 0.6 + rm.count * 0.35);
+      ctx.beginPath();
+      ctx.moveTo(px, py);
+      ctx.lineTo(rx, ry);
+      ctx.stroke();
+      ctx.restore();
+
+      ctx.save();
+      ctx.fillStyle = "#1e293b";
+      ctx.strokeStyle = "#334155";
+      ctx.beginPath();
+      ctx.arc(rx, ry, 5 + Math.min(6, rm.count), 0, Math.PI * 2);
+      ctx.fill(); ctx.stroke();
+      ctx.fillStyle = "#cbd5e1";
+      ctx.font = "9px Consolas";
+      ctx.textAlign = "center";
+      ctx.fillText(rm.ip, rx, ry + 17);
+      if (g && g.country)
+        ctx.fillText(String(g.country).slice(0, 10), rx, ry + 28);
+      ctx.restore();
+    });
+
+    ctx.save();
+    ctx.fillStyle = hot ? "rgba(239,68,68,0.18)" : "rgba(56,189,248,0.14)";
+    ctx.strokeStyle = hot ? "#ef4444" : "#38bdf8";
+    ctx.lineWidth = hot ? 2 : 1.3;
+    ctx.beginPath();
+    ctx.arc(px, py, pr, 0, Math.PI * 2);
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle = "#e2e8f0";
+    ctx.font = "bold 11px 'Microsoft YaHei'";
+    ctx.textAlign = "center";
+    const nm = p.proc.replace(/\.exe$/i, "");
+    ctx.fillText(nm.length > 12 ? nm.slice(0, 11) + "…" : nm, px, py + 3);
+    ctx.fillStyle = "#94a3b8";
+    ctx.font = "10px Consolas";
+    ctx.fillText(String(p.estab), px, py + 15);
+    ctx.restore();
+  });
+}
+
+/* ---------- WiFi 环境 ---------- */
+const sigLabels = [], sigData = [];
+let wifiData = null;
+
+const sigChart = new Chart($("sigChart"), {
+  type: "line",
+  data: {
+    labels: sigLabels,
+    datasets: [{
+      label: "信号强度(%)", data: sigData,
+      borderColor: "#38bdf8", backgroundColor: "rgba(56,189,248,0.10)",
+      fill: true, borderWidth: 1.5, pointRadius: 0, tension: 0.3,
+    }],
+  },
+  options: {
+    animation: false, responsive: true, maintainAspectRatio: false,
+    scales: { x: { ticks: { maxTicksLimit: 8 } }, y: { min: 0, max: 100, ticks: { callback: v => v + "%" } } },
+    plugins: { legend: { display: false } },
+  },
+});
+
+let chanChart = null;
+
+async function loadWifiEnv() {
+  try {
+    const r = await fetch("/api/wifi-env");
+    wifiData = await r.json();
+    renderWifiEnv(wifiData);
+  } catch (e) { /* retry */ }
+}
+
+function renderWifiEnv(d) {
+  if (!d) return;
+  const sig = d.our_signal;
+  $("sigCard").textContent = sig != null ? sig + "%" : "未知";
+  $("sigCard").className = sig == null ? "value text-blue"
+    : sig >= 60 ? "value text-green" : sig >= 40 ? "value text-amber" : "value text-red";
+  $("sigSub").textContent = sig == null ? "当前模式不报告RSSI" : sig >= 60 ? "信号良好" : sig >= 40 ? "一般，注意遮挡" : "较弱";
+
+  const itf = d.interference || {};
+  $("interfCard").textContent = itf.score != null ? itf.level : "-";
+  $("interfCard").className = itf.level === "高" ? "value text-red"
+    : itf.level === "中" ? "value text-amber" : "value text-green";
+  $("interfSub").textContent = itf.score != null ? "评分 " + itf.score + "/100" : "扫描中…";
+
+  $("apCount").textContent = String((d.neighbors || []).length);
+  $("apSub").textContent = d.ts ? "更新于 " + fmtTime(d.ts * 1000) : "-";
+
+  $("chanCard").textContent = itf.our_channel != null ? itf.our_channel : "-";
+  $("chanCard").className = "value text-blue";
+  $("chanSub").textContent = itf.our_channel != null
+    ? (itf.our_channel <= 14 ? "2.4GHz" : "5GHz") : "未知（热点模式）";
+
+  $("wifiAdvice").textContent = itf.advice || "等待扫描…";
+  $("wifiAdvice").className = "advice " +
+    (itf.level === "高" ? "text-red" : itf.level === "中" ? "text-amber" : "text-green");
+
+  const chans = d.channels || [];
+  const labels = chans.map(c => String(c.ch));
+  const counts = chans.map(c => c.count);
+  const colors = chans.map(c =>
+    c.ch === itf.our_channel ? "#f59e0b"
+      : c.band === "2.4G" ? "rgba(167,139,250,0.75)" : "rgba(56,189,248,0.75)");
+  if (!chanChart) {
+    chanChart = new Chart($("chanChart"), {
+      type: "bar",
+      data: { labels, datasets: [{ label: "AP 数量", data: counts, backgroundColor: colors, borderRadius: 3 }] },
+      options: {
+        animation: false, responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: { x: { title: { display: true, text: "信道" } }, y: { beginAtZero: true, ticks: { precision: 0 } } },
+      },
+    });
+  } else {
+    chanChart.data.labels = labels;
+    chanChart.data.datasets[0].data = counts;
+    chanChart.data.datasets[0].backgroundColor = colors;
+    chanChart.update();
+  }
+
+  const tb = $("apTable").querySelector("tbody");
+  tb.innerHTML = "";
+  for (const ap of (d.neighbors || []).slice(0, 30)) {
+    const cls = ap.signal >= 60 ? "text-red" : ap.signal >= 40 ? "text-amber" : "";
+    const rel = itf.our_channel != null && ap.channel === itf.our_channel
+      ? '<b class="text-amber">同信道</b>'
+      : (itf.our_channel != null && ap.channel != null && Math.abs(ap.channel - itf.our_channel) <= 4 && itf.our_channel <= 14
+        ? "邻信道" : "");
+    tb.insertAdjacentHTML("beforeend", `<tr>
+      <td>${esc(ap.ssid)}</td><td class="mono small">${esc(ap.bssid || "-")}</td>
+      <td class="${cls}">${ap.signal != null ? ap.signal + "%" : "-"}</td>
+      <td>${ap.channel ?? "-"}</td><td>${ap.band ? ap.band + "GHz" : "-"}</td>
+      <td>${rel}</td></tr>`);
+  }
+}
+
 /* ---------- WebSocket ---------- */
 let ws = null;
 function connectWS() {
@@ -378,8 +813,16 @@ function connectWS() {
   ws.onmessage = ev => {
     const s = JSON.parse(ev.data);
     if (!s.ts) return;
+    lastSnap = s;
     renderCards(s);
     pushPoint(s.ts, s.down_bps, s.up_bps, s.latency, s.jitter, s.loss_pct);
+    const sig = s.wifi && s.wifi.signal;
+    if (sig != null) {
+      sigLabels.push(fmtTime(s.ts));
+      sigData.push(sig);
+      if (sigLabels.length > MAX_POINTS) { sigLabels.shift(); sigData.shift(); }
+      sigChart.update();
+    }
   };
   ws.onclose = () => setTimeout(connectWS, 2000);
   ws.onerror = () => ws.close();
@@ -391,6 +834,14 @@ async function loadHistory() {
     const h = await r.json();
     for (let i = 0; i < h.ts.length; i++) {
       pushPoint(h.ts[i], h.down_bps[i], h.up_bps[i], h.latency[i], h.jitter[i], h.loss_pct[i]);
+    }
+    if (h.wifi_signal) {
+      sigLabels.length = 0; sigData.length = 0;
+      for (let i = 0; i < h.ts.length; i++) {
+        sigLabels.push(fmtTime(h.ts[i]));
+        sigData.push(h.wifi_signal[i]);
+      }
+      sigChart.update();
     }
   } catch (e) { /* retry */ }
 }

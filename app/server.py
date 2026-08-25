@@ -9,10 +9,12 @@ from fastapi.staticfiles import StaticFiles
 from .analyzer import Analyzer
 from .connmon import ConnMon
 from .dnsprobe import DnsProbe
+from .geoip import GeoIP
 from .monitor import NetworkMonitor
 from .netinfo import NetInfo
 from .pathmon import PathMonitor
 from .storage import Storage
+from .wifienv import WifiEnv
 
 BASE = Path(__file__).resolve().parent
 storage = Storage()
@@ -21,6 +23,8 @@ netinfo = NetInfo()
 dnsprobe = DnsProbe(netinfo)
 connmon = ConnMon(storage)
 pathmon = PathMonitor(monitor, storage)
+wifienv = WifiEnv(monitor)
+geoip = GeoIP(storage)
 analyzer = Analyzer(monitor, storage=storage, netinfo=netinfo,
                     dnsprobe=dnsprobe, connmon=connmon, pathmon=pathmon)
 
@@ -32,6 +36,8 @@ async def lifespan(app):
     dnsprobe.start()
     connmon.start()
     pathmon.start()
+    wifienv.start()
+    geoip.start()
     analyzer.start()
     yield
     monitor.stop()
@@ -39,6 +45,8 @@ async def lifespan(app):
     dnsprobe.stop()
     connmon.stop()
     pathmon.stop()
+    wifienv.stop()
+    geoip.stop()
     analyzer.stop()
 
 
@@ -74,6 +82,7 @@ def api_history(seconds: int = 3600):
         "loss_pct": [x["loss_pct"] for x in h],
         "down_bps": [x["down_bps"] for x in h],
         "up_bps": [x["up_bps"] for x in h],
+        "wifi_signal": [x.get("wifi_signal") for x in h],
     }
 
 
@@ -112,6 +121,16 @@ def api_connections():
 @app.get("/api/analysis")
 def api_analysis():
     return analyzer.get_report()
+
+
+@app.get("/api/wifi-env")
+def api_wifi_env():
+    return wifienv.get_state()
+
+
+@app.post("/api/geo")
+async def api_geo(ips: list[str]):
+    return geoip.get(ips)
 
 
 @app.websocket("/ws")

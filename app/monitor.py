@@ -309,6 +309,7 @@ class NetworkMonitor:
                     "down_bps": down,
                     "up_bps": up,
                     "dns_ok": self.dns_ok,
+                    "wifi_signal": (self.wifi or {}).get("signal"),
                 })
                 self.probes_history.append({"ts": ts, "probes": probe_ms, "gateway_ms": self.gateway_ms})
 

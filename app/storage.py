@@ -32,6 +32,10 @@ class Storage:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     ts REAL, proc_name TEXT, estab INTEGER, new_conn INTEGER
                 );
+                CREATE TABLE IF NOT EXISTS geo_cache (
+                    ip TEXT PRIMARY KEY,
+                    country TEXT, city TEXT, isp TEXT, ts REAL
+                );
             """)
             self._conn.commit()
 
@@ -75,6 +79,21 @@ class Storage:
                         "INSERT INTO proc_snaps (ts, proc_name, estab, new_conn) VALUES (?,?,?,?)",
                         (ts, name, st.get("estab", 0), st.get("new", 0)))
             self._conn.commit()
+
+    def save_geo(self, entries):
+        with self._lock:
+            for e in entries:
+                self._conn.execute(
+                    "INSERT OR REPLACE INTO geo_cache (ip, country, city, isp, ts) "
+                    "VALUES (?,?,?,?,?)",
+                    (e["ip"], e.get("country"), e.get("city"), e.get("isp"), time.time()))
+            self._conn.commit()
+
+    def load_geo(self):
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT ip, country, city, isp FROM geo_cache").fetchall()
+        return {r[0]: {"country": r[1], "city": r[2], "isp": r[3]} for r in rows}
 
     def close(self):
         with self._lock:

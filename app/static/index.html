@@ -16,9 +16,11 @@
   <div id="statusPill" class="pill">初始化中…</div>
   <nav class="tabs">
     <button class="tab active" data-tab="overview">总览</button>
+    <button class="tab" data-tab="map">网络地图</button>
     <button class="tab" data-tab="netdetail">网络详情</button>
     <button class="tab" data-tab="path">路由路径</button>
     <button class="tab" data-tab="procs">本机进程</button>
+    <button class="tab" data-tab="wifi">WiFi 环境</button>
   </nav>
   <div class="uptime">已运行 <span id="uptime">-</span></div>
 </header>
@@ -121,6 +123,55 @@
     <div class="panel full">
       <h3>连接风暴记录</h3>
       <ul id="stormList" class="plain-list"><li class="empty">暂无</li></ul>
+    </div>
+  </section>
+</main>
+
+<main id="tab-map" class="tab-page">
+  <section class="panels wide">
+    <div class="panel full">
+      <div class="row-between">
+        <h3>链路拓扑 · 发包方向</h3>
+        <span class="muted" id="mapMeta"></span>
+      </div>
+      <canvas id="mapCanvas" height="400"></canvas>
+      <p class="note">粒子沿连线移动表示发包方向 · 线色=该链路延迟（绿&lt;100ms / 黄&lt;300ms / 红=超时）· 虚线=DNS查询路径 · 存在代理时流量实际先经隧道节点</p>
+    </div>
+    <div class="panel full">
+      <div class="row-between">
+        <h3>连接星图（进程 ↔ 远程主机）</h3>
+        <span class="muted" id="connMeta"></span>
+      </div>
+      <canvas id="connCanvas" height="440"></canvas>
+      <div id="geoLegend" class="geo-legend"></div>
+      <p class="note">内圈节点为进程，大小∝活跃连接数，红色描边=新建连接过快；外圈为其远程地址（附地理归属）· 每3秒刷新</p>
+    </div>
+  </section>
+</main>
+
+<main id="tab-wifi" class="tab-page">
+  <section class="cards">
+    <div class="card"><div class="label">当前信号强度</div><div class="value" id="sigCard">-</div><div class="sub" id="sigSub">-</div></div>
+    <div class="card"><div class="label">干扰评估</div><div class="value" id="interfCard">-</div><div class="sub" id="interfSub">-</div></div>
+    <div class="card"><div class="label">可见 AP 总数</div><div class="value" id="apCount">-</div><div class="sub" id="apSub">-</div></div>
+    <div class="card"><div class="label">工作信道</div><div class="value" id="chanCard">-</div><div class="sub" id="chanSub">-</div></div>
+  </section>
+  <section class="charts">
+    <div class="chart-card"><h3>信号强度历史（%）</h3><canvas id="sigChart"></canvas></div>
+    <div class="chart-card"><h3>信道占用分布</h3><canvas id="chanChart"></canvas></div>
+  </section>
+  <section class="panels wide">
+    <div class="panel full">
+      <h3>优化建议</h3>
+      <p id="wifiAdvice" class="advice">等待扫描…</p>
+    </div>
+    <div class="panel full">
+      <h3>邻近 AP 列表</h3>
+      <table class="tbl" id="apTable">
+        <thead><tr><th>SSID</th><th>BSSID</th><th>信号</th><th>信道</th><th>频段</th><th>与本机关系</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <p class="note" id="apNote">每20秒扫描一次周边无线环境</p>
     </div>
   </section>
 </main>

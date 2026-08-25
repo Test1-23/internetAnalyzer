@@ -125,7 +125,8 @@ class ConnMon:
         out = []
         for name, g in grouped.items():
             remotes = sorted(g["remotes"].items(), key=lambda x: x[1], reverse=True)[:8]
-            out.append({**g, "top_remotes": [ip for ip, _ in remotes],
+            out.append({**g,
+                        "top_remotes": [{"ip": ip, "count": c} for ip, c in remotes],
                         "new_per_min": summary.get(name, {}).get("new_per_min", 0)})
         out.sort(key=lambda x: x["estab"], reverse=True)
         return out[:limit]
