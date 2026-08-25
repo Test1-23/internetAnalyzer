@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>网络分析器</title>
+<link rel="stylesheet" href="/static/style.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <span class="logo">&#128225;</span>
+    <span class="title">网络分析器</span>
+  </div>
+  <div id="statusPill" class="pill">初始化中…</div>
+  <div class="uptime">已运行 <span id="uptime">-</span></div>
+</header>
+
+<main>
+  <section class="cards">
+    <div class="card">
+      <div class="label">下载速度</div>
+      <div class="value" id="downSpeed">-</div>
+      <div class="sub" id="downTotal">-</div>
+    </div>
+    <div class="card">
+      <div class="label">上传速度</div>
+      <div class="value" id="upSpeed">-</div>
+      <div class="sub" id="upTotal">-</div>
+    </div>
+    <div class="card">
+      <div class="label">当前延迟</div>
+      <div class="value" id="latency">-</div>
+      <div class="sub" id="jitter">-</div>
+    </div>
+    <div class="card">
+      <div class="label">丢包率</div>
+      <div class="value" id="lossPct">-</div>
+      <div class="sub">最近10秒</div>
+    </div>
+    <div class="card">
+      <div class="label">连接质量</div>
+      <div class="value" id="quality">-</div>
+      <div class="sub" id="qualityHint">-</div>
+    </div>
+    <div class="card">
+      <div class="label">网络接入</div>
+      <div class="value" id="wifiCard">-</div>
+      <div class="sub" id="nicCard">-</div>
+    </div>
+    <div class="card">
+      <div class="label">网关</div>
+      <div class="value" id="gateway">-</div>
+      <div class="sub" id="gatewayMs">-</div>
+    </div>
+    <div class="card">
+      <div class="label">DNS 解析</div>
+      <div class="value" id="dns">-</div>
+      <div class="sub">baidu.com / qq.com</div>
+    </div>
+  </section>
+
+  <section class="charts">
+    <div class="chart-card">
+      <h3>实时流量（最近5分钟）</h3>
+      <canvas id="trafficChart"></canvas>
+    </div>
+    <div class="chart-card">
+      <h3>延迟 / 抖动（最近5分钟）</h3>
+      <canvas id="latencyChart"></canvas>
+    </div>
+    <div class="chart-card">
+      <h3>丢包率（最近5分钟）</h3>
+      <canvas id="lossChart"></canvas>
+    </div>
+  </section>
+
+  <section class="panels">
+    <div class="panel summary">
+      <h3>诊断结论</h3>
+      <p id="summaryText">正在采集数据…</p>
+      <ul id="suggestions"></ul>
+    </div>
+    <div class="panel issues">
+      <h3>异常事件</h3>
+      <ul id="issues"><li class="empty">暂无异样</li></ul>
+    </div>
+    <div class="panel probes">
+      <h3>探测目标</h3>
+      <div id="probes"></div>
+      <p class="probe-note">每秒以 TCP 连接方式探测各目标，超时按丢包计</p>
+    </div>
+  </section>
+</main>
+
+<footer>每秒采样 · 历史数据保留6小时 · 诊断每5秒更新</footer>
+<script src="/static/app.js"></script>
+</body>
+</html>
