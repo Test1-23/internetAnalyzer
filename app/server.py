@@ -7,11 +7,14 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .analyzer import Analyzer
+from .aptracker import APTracker
+from .attribution import Attribution
 from .connmon import ConnMon
 from .dnsprobe import DnsProbe
 from .geoip import GeoIP
 from .monitor import NetworkMonitor
 from .netinfo import NetInfo
+from .nodeprofiler import NodeProfiler
 from .pathmon import PathMonitor
 from .storage import Storage
 from .wifienv import WifiEnv
@@ -25,8 +28,11 @@ connmon = ConnMon(storage)
 pathmon = PathMonitor(monitor, storage)
 wifienv = WifiEnv(monitor)
 geoip = GeoIP(storage)
+nodeprofiler = NodeProfiler(monitor, netinfo, pathmon, storage)
+aptracker = APTracker(monitor, wifienv, storage)
 analyzer = Analyzer(monitor, storage=storage, netinfo=netinfo,
                     dnsprobe=dnsprobe, connmon=connmon, pathmon=pathmon)
+attribution = Attribution(monitor, analyzer, pathmon, wifienv, connmon, netinfo)
 
 
 @asynccontextmanager
@@ -38,7 +44,10 @@ async def lifespan(app):
     pathmon.start()
     wifienv.start()
     geoip.start()
+    nodeprofiler.start()
+    aptracker.start()
     analyzer.start()
+    attribution.start()
     yield
     monitor.stop()
     netinfo.stop()
@@ -47,7 +56,10 @@ async def lifespan(app):
     pathmon.stop()
     wifienv.stop()
     geoip.stop()
+    nodeprofiler.stop()
+    aptracker.stop()
     analyzer.stop()
+    attribution.stop()
 
 
 app = FastAPI(title="网络分析器", lifespan=lifespan)
@@ -126,6 +138,21 @@ def api_analysis():
 @app.get("/api/wifi-env")
 def api_wifi_env():
     return wifienv.get_state()
+
+
+@app.get("/api/nodes")
+def api_nodes():
+    return {"nodes": nodeprofiler.get_nodes(), "gateway": monitor.gateway}
+
+
+@app.get("/api/aps")
+def api_aps():
+    return {"aps": aptracker.get_aps()}
+
+
+@app.get("/api/attribution")
+def api_attribution():
+    return {"current": attribution.get(), "history": attribution.get_history()}
 
 
 @app.post("/api/geo")

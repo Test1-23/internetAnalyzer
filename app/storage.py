@@ -36,6 +36,44 @@ class Storage:
                     ip TEXT PRIMARY KEY,
                     country TEXT, city TEXT, isp TEXT, ts REAL
                 );
+                CREATE TABLE IF NOT EXISTS ap_fingerprints (
+                    bssid TEXT PRIMARY KEY,
+                    ssid TEXT,
+                    first_seen REAL, last_seen REAL,
+                    seen_count INTEGER DEFAULT 0,
+                    signal_last INTEGER, signal_min INTEGER, signal_max INTEGER,
+                    signal_avg REAL, signal_samples INTEGER DEFAULT 0,
+                    signal_std REAL DEFAULT 0,
+                    channel INTEGER, channel_history TEXT DEFAULT '[]',
+                    band TEXT,
+                    is_current INTEGER DEFAULT 0,
+                    corr_loss_samples INTEGER DEFAULT 0,
+                    suspicion INTEGER DEFAULT 0
+                );
+                CREATE TABLE IF NOT EXISTS lan_nodes (
+                    ip TEXT PRIMARY KEY,
+                    mac TEXT, role TEXT, gateway_score INTEGER,
+                    reasons TEXT, open_ports TEXT,
+                    first_seen REAL, last_seen REAL
+                );
+                CREATE TABLE IF NOT EXISTS ap_fingerprints (
+                    bssid TEXT PRIMARY KEY,
+                    ssid TEXT,
+                    first_seen REAL, last_seen REAL, seen_count INTEGER,
+                    signal_last INTEGER, signal_min INTEGER, signal_max INTEGER,
+                    signal_avg REAL, signal_std REAL, signal_samples INTEGER,
+                    channel INTEGER, band TEXT,
+                    channel_history TEXT,
+                    is_current INTEGER,
+                    corr_loss_samples INTEGER,
+                    suspicion INTEGER
+                );
+                CREATE TABLE IF NOT EXISTS lan_nodes (
+                    ip TEXT PRIMARY KEY,
+                    mac TEXT, role TEXT, gateway_score INTEGER,
+                    reasons TEXT, open_ports TEXT,
+                    first_seen REAL, last_seen REAL
+                );
             """)
             self._conn.commit()
 
@@ -94,6 +132,61 @@ class Storage:
             rows = self._conn.execute(
                 "SELECT ip, country, city, isp FROM geo_cache").fetchall()
         return {r[0]: {"country": r[1], "city": r[2], "isp": r[3]} for r in rows}
+
+    def upsert_ap(self, fp):
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO ap_fingerprints "
+                "(bssid, ssid, first_seen, last_seen, seen_count, signal_last, signal_min, "
+                " signal_max, signal_avg, signal_samples, signal_std, channel, channel_history, "
+                " band, is_current, corr_loss_samples, suspicion) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (fp["bssid"], fp.get("ssid"), fp.get("first_seen"), fp.get("last_seen"),
+                 fp.get("seen_count", 0), fp.get("signal_last"), fp.get("signal_min"),
+                 fp.get("signal_max"), fp.get("signal_avg"), fp.get("signal_samples", 0),
+                 fp.get("signal_std", 0), fp.get("channel"),
+                 json.dumps(fp.get("channel_history", [])), fp.get("band"),
+                 1 if fp.get("is_current") else 0,
+                 fp.get("corr_loss_samples", 0), fp.get("suspicion", 0)))
+            self._conn.commit()
+
+    def load_aps(self):
+        with self._lock:
+            rows = self._conn.execute("SELECT * FROM ap_fingerprints").fetchall()
+        cols = ["bssid", "ssid", "first_seen", "last_seen", "seen_count", "signal_last",
+                "signal_min", "signal_max", "signal_avg", "signal_samples", "signal_std",
+                "channel", "channel_history", "band", "is_current", "corr_loss_samples",
+                "suspicion"]
+        out = {}
+        for r in rows:
+            d = dict(zip(cols, r))
+            d["channel_history"] = json.loads(d.get("channel_history") or "[]")
+            out[d["bssid"]] = d
+        return out
+
+    def upsert_lan_node(self, node):
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO lan_nodes "
+                "(ip, mac, role, gateway_score, reasons, open_ports, first_seen, last_seen) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (node["ip"], node.get("mac"), node.get("role"), node.get("gateway_score", 0),
+                 json.dumps(node.get("reasons", [])), json.dumps(node.get("open_ports", [])),
+                 node.get("first_seen"), node.get("last_seen")))
+            self._conn.commit()
+
+    def load_lan_nodes(self):
+        with self._lock:
+            rows = self._conn.execute("SELECT * FROM lan_nodes").fetchall()
+        cols = ["ip", "mac", "role", "gateway_score", "reasons", "open_ports",
+                "first_seen", "last_seen"]
+        out = {}
+        for r in rows:
+            d = dict(zip(cols, r))
+            d["reasons"] = json.loads(d.get("reasons") or "[]")
+            d["open_ports"] = json.loads(d.get("open_ports") or "[]")
+            out[d["ip"]] = d
+        return out
 
     def close(self):
         with self._lock:

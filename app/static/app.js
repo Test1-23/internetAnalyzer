@@ -352,6 +352,7 @@ const tabTimers = {
   procs: [[loadProcs, 3000]],
   map: [[loadMapData, 5000], [loadConnData, 3000]],
   wifi: [[loadWifiEnv, 15000]],
+  nodes: [[loadNodes, 10000], [loadAps, 15000], [loadAttribution, 8000]],
 };
 let runningTimers = [];
 
@@ -824,6 +825,112 @@ function renderWifiEnv(d) {
       <td>${ap.channel ?? "-"}</td><td>${ap.band ? ap.band + "GHz" : "-"}</td>
       <td>${rel}</td></tr>`);
   }
+}
+
+/* ---------- 节点画像 ---------- */
+const SIDE_NAME = { local: "本机", lan: "本地网络", isp: "网络提供侧", target: "目标服务" };
+let lastAttrSig = "";
+
+async function loadAttribution() {
+  try {
+    const r = await fetch("/api/attribution");
+    const d = await r.json();
+    const c = d.current;
+    if (!c) return;
+    const v = $("attrVerdict");
+    if (c.responsibility === "none") {
+      v.textContent = "✓ " + c.conclusion;
+      v.className = "verdict good";
+    } else {
+      v.innerHTML = `⚠ 主要责任侧：<b>${SIDE_NAME[c.responsibility] || c.responsibility}</b>
+        <span class="badge ${c.confidence >= 60 ? "high" : "medium"}">置信度 ${c.confidence}%</span><br>
+        <span class="issue-detail">${esc(c.conclusion)}</span>`;
+      v.className = "verdict " + (c.responsibility === "local" ? "warn-local"
+        : c.responsibility === "lan" ? "bad" : "warn");
+    }
+    const total = Object.values(c.scores).reduce((a, b) => a + b, 0) || 1;
+    $("attrScores").innerHTML = Object.entries(c.scores).map(([side, sc]) => {
+      const w = Math.round(sc / total * 100);
+      return `<div class="score-item"><span>${SIDE_NAME[side]}</span>
+        <div class="bar"><i style="width:${w}%;background:${
+        side === "local" ? "#a78bfa" : side === "lan" ? "#f59e0b" :
+        side === "isp" ? "#ef4444" : "#38bdf8"}"></i></div>
+        <b>${sc}</b></div>`;
+    }).join("");
+    const sig = JSON.stringify([c.responsibility, c.confidence, c.evidence]);
+    if (sig !== lastAttrSig) {
+      lastAttrSig = sig;
+      $("attrEvidence").innerHTML = (c.evidence || []).map(e =>
+        `<li><b class="text-${e.side === "isp" ? "red" : e.side === "lan" ? "amber" : ""}">[${SIDE_NAME[e.side]}]</b> ${esc(e.text)}</li>`
+      ).join("") || '<li class="empty">无证据</li>';
+      $("attrMeta").textContent = c.since
+        ? "当前结论自 " + fmtTime(c.since * 1000) + " 起生效 · 历史切换 " + (d.history || []).length + " 次"
+        : "";
+    }
+  } catch (e) { /* retry */ }
+}
+
+const ROLE_NAME = {
+  gateway: '<b class="text-green">网关（确定）</b>',
+  likely_gateway: '<b class="text-amber">疑似网关</b>',
+  dns_server: "DNS 服务器",
+  host: "普通主机",
+};
+
+async function loadNodes() {
+  try {
+    const r = await fetch("/api/nodes");
+    const d = await r.json();
+    const tb = $("nodeTable").querySelector("tbody");
+    const rows = (d.nodes || []).map(n => {
+      const cls = n.role === "gateway" ? "text-green" : n.role === "likely_gateway" ? "text-amber" : "";
+      return `<tr><td class="mono">${esc(n.ip)}${n.ip === d.gateway ? ' <span class="vtag">默认路由</span>' : ""}</td>
+        <td class="mono small">${esc(n.mac || "-")}</td>
+        <td class="${cls}">${ROLE_NAME[n.role] || n.role}</td>
+        <td><b>${n.gateway_score}</b></td>
+        <td class="small">${esc((n.reasons || []).join("；")) || "-"}</td>
+        <td class="mono small">${(n.open_ports || []).join(", ") || "-"}</td>
+        <td class="small">${n.first_seen ? fmtTime(n.first_seen * 1000) : "-"}</td></tr>`;
+    }).join("");
+    if (rows !== tb.dataset.last) {
+      tb.dataset.last = rows;
+      tb.innerHTML = rows;
+    }
+  } catch (e) { /* retry */ }
+}
+
+async function loadAps() {
+  try {
+    const r = await fetch("/api/aps");
+    const d = await r.json();
+    const box = $("apCards");
+    const html = (d.aps || []).map(ap => {
+      const sig = ap.signal_avg != null ? ap.signal_avg.toFixed(0) : "-";
+      const suspCls = ap.suspicion >= 60 ? "text-red" : ap.suspicion >= 35 ? "text-amber" : "text-green";
+      const chHist = (ap.channel_history || []).slice(-3).map(h =>
+        `${h.from}→${h.to}`).join("，") || "无切换记录";
+      return `<div class="ap-card${ap.is_current ? " current" : ""}">
+        <div class="row-between">
+          <b>${esc(ap.ssid || "(未知SSID)")}${ap.is_current ? ' <span class="vtag">当前</span>' : ""}</b>
+          <span class="${suspCls}">嫌疑 ${ap.suspicion}</span>
+        </div>
+        <div class="mono small">${esc(ap.bssid)}</div>
+        <div class="ap-stats">
+          <span>信号 <b>${sig}%</b>（${ap.signal_min ?? "-"}~${ap.signal_max ?? "-"}，波动±${ap.signal_std ?? 0}）</span>
+          <span>信道 <b>${ap.channel ?? "-"}</b> ${ap.band ? ap.band + "GHz" : ""}</span>
+        </div>
+        <div class="small" style="color:var(--muted)">信道史：${chHist}</div>
+        <div class="small" style="color:var(--muted)">
+          样本 ${ap.signal_samples || 0} · 伴随丢包 ${ap.corr_loss_samples || 0} 次 ·
+          ${ap.first_seen ? "首次见 " + new Date(ap.first_seen * 1000).toLocaleDateString("zh-CN") : ""}
+        </div>
+      </div>`;
+    }).join("");
+    if (html !== box.dataset.last) {
+      box.dataset.last = html;
+      box.innerHTML = html || '<p class="note">尚未扫描到AP</p>';
+    }
+  } catch (e) { /* retry */ }
 }
 
 /* ---------- WebSocket ---------- */

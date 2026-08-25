@@ -21,6 +21,7 @@
     <button class="tab" data-tab="path">路由路径</button>
     <button class="tab" data-tab="procs">本机进程</button>
     <button class="tab" data-tab="wifi">WiFi 环境</button>
+    <button class="tab" data-tab="nodes">节点画像</button>
   </nav>
   <div class="uptime">已运行 <span id="uptime">-</span></div>
 </header>
@@ -172,6 +173,31 @@
         <tbody></tbody>
       </table>
       <p class="note" id="apNote">每20秒扫描一次周边无线环境</p>
+    </div>
+  </section>
+</main>
+
+<main id="tab-nodes" class="tab-page">
+  <section class="panels wide">
+    <div class="panel full">
+      <h3>不稳定原因归因</h3>
+      <div id="attrVerdict" class="verdict good">等待分析…</div>
+      <div id="attrScores" class="score-row"></div>
+      <ul id="attrEvidence" class="plain-list" style="max-height:220px"></ul>
+      <p class="note" id="attrMeta"></p>
+    </div>
+    <div class="panel full">
+      <h3>局域网节点 · 网关行为识别</h3>
+      <table class="tbl" id="nodeTable">
+        <thead><tr><th>IP</th><th>MAC</th><th>角色判定</th><th>网关得分</th><th>判定依据</th><th>开放端口</th><th>首次发现</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <p class="note">综合默认路由、DNS服务、路径第一跳、开放端口与单MAC多IP转发特征打分 · 每30秒扫描ARP与端口</p>
+    </div>
+    <div class="panel full">
+      <h3>AP 指纹档案</h3>
+      <div id="apCards" class="ap-grid"></div>
+      <p class="note">按BSSID持久化（重启不丢）：信号统计/信道切换史/与本机丢包的伴随关系 → 干扰嫌疑评分</p>
     </div>
   </section>
 </main>

@@ -318,6 +318,42 @@ footer {
 .advice.text-amber { color: var(--amber); }
 .advice.text-green { color: var(--green); }
 
+/* ---------- 节点画像 ---------- */
+.verdict.warn { background: rgba(245,158,11,0.1); color: var(--amber); }
+.verdict.warn-local { background: rgba(167,139,250,0.12); color: var(--blue); }
+.score-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+  margin: 14px 0;
+}
+.score-item { font-size: 12px; color: var(--muted); }
+.score-item b { color: var(--text); margin-left: 6px; }
+.score-item .bar { margin-top: 5px; }
+
+.ap-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+.ap-card {
+  background: #16233b;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+}
+.ap-card.current { border-color: rgba(56,189,248,0.6); }
+.ap-stats {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text);
+}
+
 @media (max-width: 900px) {
   .panels { grid-template-columns: 1fr; }
   header { flex-wrap: wrap; }
