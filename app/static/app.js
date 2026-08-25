@@ -143,16 +143,14 @@ function renderCards(s) {
   $("errChip").classList.toggle("hidden", !(s.nic_err_rate > 5));
 
   const probes = $("probes");
-  probes.innerHTML = "";
-  for (const p of s.probes) {
-    const chip = document.createElement("div");
-    chip.className = "chip";
-    const n = document.createElement("span"); n.className = "n"; n.textContent = p.name;
-    const m = document.createElement("span");
-    m.className = "m " + color(p.ms);
-    m.textContent = p.ms != null ? p.ms.toFixed(0) + "ms" : "超时";
-    chip.append(n, m);
-    probes.appendChild(chip);
+  const chipsHtml = (s.probes || []).map(p => {
+    const cls = color(p.ms);
+    const val = p.ms != null ? p.ms.toFixed(0) + "ms" : "超时";
+    return `<div class="chip"><span class="n">${esc(p.name)}</span><span class="m ${cls}">${val}</span></div>`;
+  }).join("");
+  if (chipsHtml !== probes.dataset.last) {
+    probes.dataset.last = chipsHtml;
+    probes.innerHTML = chipsHtml;
   }
 }
 
@@ -382,12 +380,14 @@ let lastGeoReq = 0;
 const mapGraph = { nodes: [], edges: [] };
 
 function fitCanvas(cv) {
+  if (!cv.dataset.h) cv.dataset.h = cv.getAttribute("height") || "400";
   const cssW = cv.clientWidth || 800;
-  const cssH = parseInt(cv.getAttribute("height"), 10) || 400;
+  const cssH = parseInt(cv.dataset.h, 10);
   const dpr = window.devicePixelRatio || 1;
-  if (cv.width !== Math.round(cssW * dpr) || cv.height !== Math.round(cssH * dpr)) {
-    cv.width = Math.round(cssW * dpr);
-    cv.height = Math.round(cssH * dpr);
+  const pw = Math.round(cssW * dpr), ph = Math.round(cssH * dpr);
+  if (cv.width !== pw || cv.height !== ph) {
+    cv.width = pw;
+    cv.height = ph;
   }
   const ctx = cv.getContext("2d");
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -476,12 +476,16 @@ function buildGraph(trace, dnsStats) {
 }
 
 function mkEdge(a, b, ms, dashed) {
-  return {
+  const key = a.id + "->" + b.id;
+  const old = mapGraph.edges.find(e => e.key === key);
+  const e = {
+    key,
     a, b, ms, dashed,
-    parts: [],
-    nextSpawn: 0,
+    parts: old ? old.parts : [],
+    nextSpawn: old ? old.nextSpawn : 0,
     dur: () => 700 + Math.min(ms == null ? 400 : ms, 500) * 3,
   };
+  return e;
 }
 
 function roundRect(ctx, x, y, w, h, r) {
@@ -590,12 +594,23 @@ async function loadMapData() {
 const isPublicIpJs = ip => /^\d{1,3}(\.\d{1,3}){3}$/.test(ip)
   && !/^(10\.|192\.168\.|127\.|169\.254\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|198\.1[89]\.|26\.|0\.)/.test(ip);
 
+let lastConnSig = "";
+
 async function loadConnData() {
   try {
     const r = await fetch("/api/connections");
     const d = await r.json();
-    renderConnCanvas(d.processes || []);
-    requestGeoBatch(d.processes || []);
+    const procs = (d.processes || []).filter(p => p.estab > 0)
+      .sort((a, b) => b.estab - a.estab).slice(0, 8);
+    const sig = JSON.stringify(procs.map(p => [
+      p.proc, p.estab, p.new_per_min,
+      (p.top_remotes || []).map(rm => [rm.ip, rm.count]),
+    ]));
+    if (sig !== lastConnSig) {
+      lastConnSig = sig;
+      renderConnCanvas(procs);
+    }
+    requestGeoBatch(procs);
     $("connMeta").textContent = "更新于 " + fmtTime(Date.now());
   } catch (e) { /* retry */ }
 }
@@ -634,8 +649,7 @@ function renderConnCanvas(procs) {
   const { ctx, w, h } = fitCanvas(cv);
   ctx.clearRect(0, 0, cv.width, cv.height);
   const cx = w / 2, cy = h / 2;
-  const list = procs.filter(p => p.estab > 0)
-    .sort((a, b) => b.estab - a.estab).slice(0, 8);
+  const list = procs;
   if (!list.length) {
     ctx.fillStyle = "#94a3b8";
     ctx.font = "13px 'Microsoft YaHei'";
@@ -793,6 +807,10 @@ function renderWifiEnv(d) {
   }
 
   const tb = $("apTable").querySelector("tbody");
+  const apSig = JSON.stringify([(itf.our_channel || null),
+    (d.neighbors || []).map(a => [a.ssid, a.bssid, a.signal, a.channel, a.band])]);
+  if (apSig === tb.dataset.last) return;
+  tb.dataset.last = apSig;
   tb.innerHTML = "";
   for (const ap of (d.neighbors || []).slice(0, 30)) {
     const cls = ap.signal >= 60 ? "text-red" : ap.signal >= 40 ? "text-amber" : "";
@@ -819,7 +837,7 @@ function connectWS() {
     renderCards(s);
     pushPoint(s.ts, s.down_bps, s.up_bps, s.latency, s.jitter, s.loss_pct);
     const sig = s.wifi && s.wifi.signal;
-    if (sig != null) {
+    if (sig != null && sig !== sigData[sigData.length - 1]) {
       sigLabels.push(fmtTime(s.ts));
       sigData.push(sig);
       if (sigLabels.length > MAX_POINTS) { sigLabels.shift(); sigData.shift(); }
@@ -834,12 +852,14 @@ async function loadHistory() {
   try {
     const r = await fetch("/api/history?seconds=600");
     const h = await r.json();
-    for (let i = 0; i < h.ts.length; i++) {
-      pushPoint(h.ts[i], h.down_bps[i], h.up_bps[i], h.latency[i], h.jitter[i], h.loss_pct[i]);
-    }
-    if (h.wifi_signal) {
-      sigLabels.length = 0; sigData.length = 0;
+    if (labels.length === 0 && h.ts.length) {
       for (let i = 0; i < h.ts.length; i++) {
+        pushPoint(h.ts[i], h.down_bps[i], h.up_bps[i], h.latency[i], h.jitter[i], h.loss_pct[i]);
+      }
+    }
+    if (sigLabels.length === 0 && h.wifi_signal && h.ts.length) {
+      for (let i = 0; i < h.ts.length; i++) {
+        if (h.wifi_signal[i] == null) continue;
         sigLabels.push(fmtTime(h.ts[i]));
         sigData.push(h.wifi_signal[i]);
       }

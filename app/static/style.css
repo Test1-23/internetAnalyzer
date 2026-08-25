@@ -302,6 +302,8 @@ footer {
 
 /* ---------- 地图与WiFi ---------- */
 #mapCanvas, #connCanvas { width: 100%; display: block; }
+#mapCanvas { height: 400px; }
+#connCanvas { height: 440px; }
 .geo-legend {
   display: flex;
   flex-wrap: wrap;
