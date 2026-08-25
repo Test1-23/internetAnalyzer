@@ -58,6 +58,13 @@ class NetworkMonitor:
         self.gateway_ms = None
         self.dns_ok = None
         self.dns_ms = None
+        self.cpu = None
+        self.mem = None
+        self.nic_speed = None
+        self.nic_err_rate = 0.0
+        self._last_nic_err = None
+        self._speed_drop_ts = None
+        psutil.cpu_percent(interval=None)
         self.gateway = self._discover_gateway()
         self.nic = self._pick_active_nic() or "unknown"
 
@@ -70,11 +77,21 @@ class NetworkMonitor:
     def _discover_gateway(self):
         try:
             out = subprocess.run(["route", "print", "-4"], capture_output=True, timeout=5)
+            best_gw, best_metric = None, None
             for line in _decode(out.stdout).splitlines():
-                if re.match(r"\s*0\.0\.0\.0\s+0\.0\.0\.0\s+", line):
-                    ips = re.findall(r"[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+", line)
-                    if len(ips) >= 3:
-                        return ips[2]
+                if not re.match(r"\s*0\.0\.0\.0\s+0\.0\.0\.0\s+", line):
+                    continue
+                nums = re.findall(r"[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+", line)
+                if len(nums) < 3:
+                    continue
+                m = re.search(r"(\d+)\s*$", line)
+                metric = int(m.group(1)) if m else 99999
+                gw = nums[2]
+                if gw.startswith("127.") or gw == "0.0.0.0":
+                    continue
+                if best_metric is None or metric < best_metric:
+                    best_gw, best_metric = gw, metric
+            return best_gw
         except Exception:
             pass
         return None
@@ -215,6 +232,29 @@ class NetworkMonitor:
             stats = psutil.net_if_stats()
             nic_stat = stats.get(self.nic)
             link_up = bool(nic_stat and nic_stat.isup) if self.nic else None
+            speed = getattr(nic_stat, "speed", 0) or 0 if nic_stat else 0
+            if speed > 0:
+                prev_speed = self.nic_speed
+                self.nic_speed = speed
+                if prev_speed and speed < prev_speed * 0.6:
+                    self._speed_drop_ts = now
+                elif prev_speed and speed >= prev_speed:
+                    pass
+            err_now = None
+            if self.nic in pernic:
+                c = pernic[self.nic]
+                err_now = c.errin + c.errout + c.dropin + c.dropout
+            if err_now is not None and self._last_nic_err is not None:
+                d = max(0, err_now - self._last_nic_err)
+                self.nic_err_rate = d
+            if err_now is not None:
+                self._last_nic_err = err_now
+
+            try:
+                self.cpu = psutil.cpu_percent(interval=None)
+                self.mem = psutil.virtual_memory().percent
+            except Exception:
+                pass
             if prev_link is None:
                 prev_link = link_up
             elif link_up != prev_link:
@@ -246,6 +286,11 @@ class NetworkMonitor:
                 "dns_ms": self.dns_ms,
                 "nic": self.nic,
                 "link_up": link_up,
+                "nic_speed": self.nic_speed,
+                "nic_err_rate": self.nic_err_rate,
+                "speed_drop_ts": int(self._speed_drop_ts * 1000) if self._speed_drop_ts else None,
+                "cpu": self.cpu,
+                "mem": self.mem,
                 "wifi": self.wifi,
                 "uptime_s": int(now - self.start_time),
                 "totals_mb": {
