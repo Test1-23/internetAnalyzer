@@ -279,11 +279,13 @@ function renderTrace(t) {
   $("traceMeta").textContent =
     `· ${new Date(t.ts * 1000).toLocaleString("zh-CN", { hour12: false })} → ${t.target}` +
     (t.changed ? " · ⚠ 与上次相比路径已变更" : "");
+  const gwIp = lastNetInfo && (lastNetInfo.interfaces || []).find(i => i.gateway)?.gateway;
   for (const h of t.hops) {
     const times = h.times.map(x => x != null ? (x < 1 ? "<1" : x.toFixed(0)) : "*").join("  ");
     const tr = document.createElement("tr");
     const lossCls = h.loss >= 2 ? "text-red" : h.loss > 0 ? "text-amber" : "";
-    tr.innerHTML = `<td>${h.hop}</td><td>${h.hop === 1 ? '<span class="vtag">网关?</span> ' : ""}${esc(h.ip)}</td>
+    const isGw = gwIp && h.ip === gwIp;
+    tr.innerHTML = `<td>${h.hop}</td><td>${isGw ? '<span class="vtag">网关</span> ' : ""}${esc(h.ip)}</td>
       <td class="mono">${times}</td><td class="${lossCls}">${h.loss}/3</td>
       <td>${t.first_loss_hop === h.hop ? `<b class="text-red">首丢跳</b>` : ""}</td>`;
     tb.appendChild(tr);
@@ -856,4 +858,5 @@ loadAnalysis();
 setInterval(loadAnalysis, 5000);
 setInterval(loadHistory, 30000);
 setInterval(loadNetInfo, 60000);
-activateTab("overview");
+const initialTab = location.hash.replace("#", "");
+activateTab(initialTab && document.getElementById("tab-" + initialTab) ? initialTab : "overview");

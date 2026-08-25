@@ -110,6 +110,9 @@ class Analyzer:
         elif down_secs > 0:
             trigger("disconnect", "连接中断", "high",
                     f"最近10分钟内出现 {down_secs} 秒完全断网")
+        if self.pathmon and (down_secs > 0 or any(
+                e["cause"] in ("high_loss", "disconnect") for e in self.events.values() if e["active"])):
+            self.pathmon.trigger()
 
         w300 = window_items(300)
         dns_fails = sum(1 for h in w300 if h["dns_ok"] is False)

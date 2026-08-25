@@ -59,16 +59,16 @@ class WifiEnv:
                            capture_output=True, timeout=15)
         text = _decode(p.stdout)
         out = []
+        cur_ssid = None
         for line in text.splitlines():
             m = SSID_PAT.match(line)
             if m:
-                out.append({"ssid": m.group(1).strip() or "(隐藏网络)",
-                            "bssid": None, "signal": None,
-                            "channel": None, "band": None})
+                cur_ssid = m.group(1).strip() or "(隐藏网络)"
                 continue
             m = BSSID_PAT.search(line)
             if m:
-                out.append({"ssid": "(同上)", "bssid": m.group(1).lower(),
+                out.append({"ssid": cur_ssid or "(未知)",
+                            "bssid": m.group(1).lower(),
                             "signal": None, "channel": None, "band": None})
                 continue
             if not out:
@@ -88,14 +88,7 @@ class WifiEnv:
                 m4 = BAND_PAT.search(line)
                 if m4:
                     last["band"] = float(m4.group(1))
-        merged = []
-        for ap in out:
-            if ap["bssid"] is None:
-                continue
-            if ap["ssid"] == "(同上)" and merged:
-                ap["ssid"] = merged[-1]["ssid"]
-            merged.append(ap)
-        return merged
+        return [ap for ap in out if ap["bssid"]]
 
     @staticmethod
     def _current_channel():

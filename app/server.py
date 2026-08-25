@@ -145,6 +145,11 @@ async def ws(websocket: WebSocket):
                 payload = dict(snap)
                 payload["cpu"] = monitor.cpu
                 payload["mem"] = monitor.mem
+                ni = netinfo.get()
+                payload["proxy"] = bool(ni.get("virtual_adapters")) or (ni.get("proxy") or {}).get("enabled")
+                pub = ni.get("public_ip") or {}
+                payload["public_ip"] = pub.get("ip")
+                payload["isp"] = pub.get("isp")
                 await websocket.send_json(payload)
             await asyncio.sleep(1)
     except WebSocketDisconnect:
