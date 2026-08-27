@@ -353,6 +353,7 @@ const tabTimers = {
   map: [[loadMapData, 5000], [loadConnData, 3000]],
   wifi: [[loadWifiEnv, 15000]],
   nodes: [[loadNodes, 10000], [loadAps, 15000], [loadAttribution, 8000]],
+  deep: [[loadNicDiag, 30000], [loadSrvProfiles, 15000]],
 };
 let runningTimers = [];
 
@@ -931,6 +932,109 @@ async function loadAps() {
       box.innerHTML = html || '<p class="note">尚未扫描到AP</p>';
     }
   } catch (e) { /* retry */ }
+}
+
+/* ---------- 深度诊断 ---------- */
+let lastNicHtml = "";
+
+async function loadNicDiag() {
+  try {
+    const r = await fetch("/api/nic-diag");
+    const d = await r.json();
+    if (!d || !d.ts) {
+      $("nicMeta").textContent = "· 采集中…";
+      return;
+    }
+    $("nicMeta").textContent = `· ${d.nic} · 更新于 ${fmtTime(d.ts * 1000)}`;
+    const sc = $("nicScore");
+    sc.textContent = "健康 " + d.health + "/100";
+    sc.className = "pill " + (d.health >= 85 ? "ok" : d.health >= 60 ? "warn" : "bad");
+
+    const fHtml = (d.findings || []).map(f =>
+      `<div class="issue-detail" style="margin:4px 0">
+        <span class="badge ${f.level === "high" ? "high" : f.level === "medium" ? "medium" : "ok"}">
+        ${f.level === "high" ? "注意" : f.level === "medium" ? "建议" : "正常"}</span> ${esc(f.text)}</div>`
+    ).join("");
+    if (fHtml !== $("nicFindings").dataset.last) {
+      $("nicFindings").dataset.last = fHtml;
+      $("nicFindings").innerHTML = fHtml;
+    }
+
+    const rows = [
+      ["驱动", `${d.driver.description || "-"} · v${d.driver.version || "?"}（${d.driver.date || "?"}${d.driver.age_years != null ? "，" + d.driver.age_years + "年前" : ""}）`],
+      ["链路", `${d.link.speed || "-"} · ${d.link.connected ? "已连接" : "断开"}`],
+      ["硬件错误包", `累计 ${d.err_total} · 当前增速 ${d.err_rate}/s`],
+      ["PCIe 位置", d.hwinfo.Bus != null ? `Bus ${d.hwinfo.Bus} / Device ${d.hwinfo.Device} / Fn ${d.hwinfo.Function}` : "-"],
+    ];
+    const kvHtml = rows.map(([k, v]) => `<div class="kv"><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join("");
+    if (kvHtml !== $("nicDetails").dataset.last) {
+      $("nicDetails").dataset.last = kvHtml;
+      $("nicDetails").innerHTML = kvHtml;
+    }
+    if (d.sensors && d.sensors.note) $("nicSensorNote").textContent = "ℹ " + d.sensors.note;
+  } catch (e) { /* retry */ }
+}
+
+let lastSrvHtml = "";
+
+async function loadSrvProfiles() {
+  try {
+    const r = await fetch("/api/server-profiles");
+    const d = await r.json();
+    const html = (d.profiles || []).map(p => {
+      const hCls = p.health >= 85 ? "ok" : p.health >= 60 ? "warn" : "bad";
+      const ttfb = p.ttfb_ms != null ? p.ttfb_ms.toFixed(0) : null;
+      const conn = p.connect_ms, tls = p.tls_ms;
+      const maxMs = Math.max(conn || 0, tls || 0, ttfb || 0, 1);
+      const bar = (v, color) => v != null
+        ? `<div class="bar"><i style="width:${Math.min(100, v / maxMs * 100)}%;background:${color}"></i></div>`
+        : "";
+      let cert = "";
+      if (p.cert) {
+        const d = p.cert_days_left;
+        let state = "";
+        if (d != null) {
+          if (d < 0) state = '<b class="text-red">已过期</b>';
+          else if (d < 14) state = `<b class="text-amber">${d}天后过期</b>`;
+          else state = `剩余${d}天`;
+        }
+        cert = `<div class="small">证书：${esc(p.cert.issuer || "?")} · ${state}</div>`;
+      }
+      return `<div class="ap-card">
+        <div class="row-between">
+          <b>${esc(p.name)} <span class="mono small">${esc(p.host)}</span></b>
+          <span class="badge ${hCls}">${p.health}分</span>
+        </div>
+        <div class="small" style="color:var(--text)">${esc(p.structure || "-")}</div>
+        <div class="ap-stats small" style="color:var(--muted)">
+          <span>TCP ${p.tcp_ms ?? "-"}ms</span><span>TLS ${tls ?? "-"}ms</span>
+          <span>TTFB ${ttfb ?? "-"}ms</span><span>HTTP ${p.status_code ?? "-"}</span>
+        </div>
+        ${bar(conn, "#38bdf8")}${bar(tls, "#a78bfa")}${bar(ttfb, "#f59e0b")}
+        ${cert}
+        <div class="small" style="color:var(--muted)">
+          A记录 ${p.ips.length} 个${p.ip_drift > 0 ? ` · <b class="text-amber">IP漂移${p.ip_drift}</b>` : ""}
+          · ${p.proxy_note ? esc(p.proxy_note) : "直连观测"}
+        </div>
+        ${(p.findings || []).filter(f => f.level !== "low").map(f =>
+          `<div class="issue-detail"><span class="badge ${f.level === "high" ? "high" : "medium"}">
+          ${f.level === "high" ? "异常" : "提示"}</span> ${esc(f.text)}</div>`).join("")}
+        <div class="row-between" style="margin-top:4px">
+          <span class="small" style="color:var(--muted)">${fmtTime(p.ts * 1000)} 分析</span>
+          <button class="btn" style="padding:3px 10px;font-size:11px" onclick="reprofile('${esc(p.name)}')">重析</button>
+        </div>
+      </div>`;
+    }).join("");
+    if (html !== lastSrvHtml) {
+      lastSrvHtml = html;
+      $("srvCards").innerHTML = html || '<p class="note">等待首轮分析…</p>';
+    }
+  } catch (e) { /* retry */ }
+}
+
+async function reprofile(name) {
+  await fetch("/api/server-profile/" + encodeURIComponent(name), { method: "POST" });
+  setTimeout(loadSrvProfiles, 6000);
 }
 
 /* ---------- WebSocket ---------- */

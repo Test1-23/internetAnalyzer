@@ -37,13 +37,15 @@ def _percentile(values, p):
 
 class Analyzer:
     def __init__(self, monitor, storage=None, netinfo=None, dnsprobe=None,
-                 connmon=None, pathmon=None, interval=5.0):
+                 connmon=None, pathmon=None, nicdiag=None, srvprobe=None, interval=5.0):
         self.monitor = monitor
         self.storage = storage
         self.netinfo = netinfo
         self.dnsprobe = dnsprobe
         self.connmon = connmon
         self.pathmon = pathmon
+        self.nicdiag = nicdiag
+        self.srvprobe = srvprobe
         self.interval = interval
         self._stop = threading.Event()
         self.events = {}
@@ -197,6 +199,26 @@ class Analyzer:
             trigger("nic_errors", "网卡错误计数增长", "medium",
                     f"活动网卡 {self.monitor.nic} 错误/丢弃包速率 {self.monitor.nic_err_rate}/s，"
                     "建议更新驱动或检查硬件")
+
+        if self.nicdiag:
+            d = self.nicdiag.get()
+            if d:
+                for f in d.get("findings", []):
+                    if f["level"] == "high":
+                        trigger("nic_hw", "网卡硬件健康告警", "medium", f["text"])
+                        break
+
+        if self.srvprobe:
+            now_p = time.time()
+            for p in self.srvprobe.get_profiles():
+                if now_p - p.get("ts", 0) > 600:
+                    continue
+                for f in p.get("findings", []):
+                    if f["level"] == "high":
+                        trigger("srv_issue", f"目标服务异常：{p['name']}", "medium",
+                                f"{f['text']}（目标 {p['host']}，"
+                                f"{'、'.join(x['text'] for x in p.get('findings', [])[:2])}）")
+                        break
 
         if self.netinfo:
             ni = self.netinfo.get()

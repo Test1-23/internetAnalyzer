@@ -56,23 +56,9 @@ class Storage:
                     reasons TEXT, open_ports TEXT,
                     first_seen REAL, last_seen REAL
                 );
-                CREATE TABLE IF NOT EXISTS ap_fingerprints (
-                    bssid TEXT PRIMARY KEY,
-                    ssid TEXT,
-                    first_seen REAL, last_seen REAL, seen_count INTEGER,
-                    signal_last INTEGER, signal_min INTEGER, signal_max INTEGER,
-                    signal_avg REAL, signal_std REAL, signal_samples INTEGER,
-                    channel INTEGER, band TEXT,
-                    channel_history TEXT,
-                    is_current INTEGER,
-                    corr_loss_samples INTEGER,
-                    suspicion INTEGER
-                );
-                CREATE TABLE IF NOT EXISTS lan_nodes (
-                    ip TEXT PRIMARY KEY,
-                    mac TEXT, role TEXT, gateway_score INTEGER,
-                    reasons TEXT, open_ports TEXT,
-                    first_seen REAL, last_seen REAL
+                CREATE TABLE IF NOT EXISTS server_profiles (
+                    target TEXT PRIMARY KEY,
+                    host TEXT, profile_json TEXT, ts REAL
                 );
             """)
             self._conn.commit()
@@ -186,6 +172,26 @@ class Storage:
             d["reasons"] = json.loads(d.get("reasons") or "[]")
             d["open_ports"] = json.loads(d.get("open_ports") or "[]")
             out[d["ip"]] = d
+        return out
+
+    def save_server_profile(self, target, host, profile, ts):
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO server_profiles (target, host, profile_json, ts) "
+                "VALUES (?,?,?,?)",
+                (target, host, json.dumps(profile), ts))
+            self._conn.commit()
+
+    def load_server_profiles(self):
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT target, profile_json FROM server_profiles").fetchall()
+        out = {}
+        for target, pj in rows:
+            try:
+                out[target] = json.loads(pj)
+            except Exception:
+                pass
         return out
 
     def close(self):

@@ -14,8 +14,10 @@ from .dnsprobe import DnsProbe
 from .geoip import GeoIP
 from .monitor import NetworkMonitor
 from .netinfo import NetInfo
+from .nicdiag import NicDiag
 from .nodeprofiler import NodeProfiler
 from .pathmon import PathMonitor
+from .srvprobe import ServerProfiler
 from .storage import Storage
 from .wifienv import WifiEnv
 
@@ -30,8 +32,11 @@ wifienv = WifiEnv(monitor)
 geoip = GeoIP(storage)
 nodeprofiler = NodeProfiler(monitor, netinfo, pathmon, storage)
 aptracker = APTracker(monitor, wifienv, storage)
+nicdiag = NicDiag(monitor)
+srvprobe = ServerProfiler(monitor, netinfo, geoip, storage)
 analyzer = Analyzer(monitor, storage=storage, netinfo=netinfo,
-                    dnsprobe=dnsprobe, connmon=connmon, pathmon=pathmon)
+                    dnsprobe=dnsprobe, connmon=connmon, pathmon=pathmon,
+                    nicdiag=nicdiag, srvprobe=srvprobe)
 attribution = Attribution(monitor, analyzer, pathmon, wifienv, connmon, netinfo)
 
 
@@ -46,6 +51,8 @@ async def lifespan(app):
     geoip.start()
     nodeprofiler.start()
     aptracker.start()
+    nicdiag.start()
+    srvprobe.start()
     analyzer.start()
     attribution.start()
     yield
@@ -58,6 +65,8 @@ async def lifespan(app):
     geoip.stop()
     nodeprofiler.stop()
     aptracker.stop()
+    nicdiag.stop()
+    srvprobe.stop()
     analyzer.stop()
     attribution.stop()
 
@@ -153,6 +162,22 @@ def api_aps():
 @app.get("/api/attribution")
 def api_attribution():
     return {"current": attribution.get(), "history": attribution.get_history()}
+
+
+@app.get("/api/nic-diag")
+def api_nic_diag():
+    return nicdiag.get()
+
+
+@app.get("/api/server-profiles")
+def api_server_profiles():
+    return {"profiles": srvprobe.get_profiles()}
+
+
+@app.post("/api/server-profile/{name}")
+async def api_profile_run(name: str):
+    srvprobe.trigger(name)
+    return {"ok": True}
 
 
 @app.post("/api/geo")

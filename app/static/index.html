@@ -22,6 +22,7 @@
     <button class="tab" data-tab="procs">本机进程</button>
     <button class="tab" data-tab="wifi">WiFi 环境</button>
     <button class="tab" data-tab="nodes">节点画像</button>
+    <button class="tab" data-tab="deep">深度诊断</button>
   </nav>
   <div class="uptime">已运行 <span id="uptime">-</span></div>
 </header>
@@ -198,6 +199,27 @@
       <h3>AP 指纹档案</h3>
       <div id="apCards" class="ap-grid"></div>
       <p class="note">按BSSID持久化（重启不丢）：信号统计/信道切换史/与本机丢包的伴随关系 → 干扰嫌疑评分</p>
+    </div>
+  </section>
+</main>
+
+<main id="tab-deep" class="tab-page">
+  <section class="panels wide">
+    <div class="panel full">
+      <div class="row-between">
+        <h3>网卡硬件健康 <span class="muted" id="nicMeta"></span></h3>
+        <span id="nicScore" class="pill">-</span>
+      </div>
+      <div id="nicFindings"></div>
+      <div id="nicDetails" class="kv-list" style="margin-top:12px"></div>
+      <p class="note" id="nicSensorNote"></p>
+    </div>
+    <div class="panel full">
+      <div class="row-between">
+        <h3>目标服务器档案 · 指纹与结构推断</h3>
+        <span class="muted">每25秒轮询分析一个目标 · 点击「重析」立即刷新</span>
+      </div>
+      <div id="srvCards" class="ap-grid"></div>
     </div>
   </section>
 </main>
