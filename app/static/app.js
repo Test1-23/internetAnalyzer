@@ -354,6 +354,7 @@ const tabTimers = {
   wifi: [[loadWifiEnv, 15000]],
   nodes: [[loadNodes, 10000], [loadAps, 15000], [loadAttribution, 8000]],
   deep: [[loadNicDiag, 30000], [loadSrvProfiles, 15000]],
+  trend: [[loadTrend, 30000], [loadDailyReport, 60000]],
 };
 let runningTimers = [];
 
@@ -1036,6 +1037,136 @@ async function reprofile(name) {
   await fetch("/api/server-profile/" + encodeURIComponent(name), { method: "POST" });
   setTimeout(loadSrvProfiles, 6000);
 }
+
+/* ---------- 趋势分析 ---------- */
+let trendHours = 24;
+let trendLatChart = null, trendTrafficChart = null;
+let lastTrendSig = "";
+
+const fmtHb = (ts) => {
+  const d = new Date(ts);
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mi = String(d.getMinutes()).padStart(2, "0");
+  return trendHours <= 6 ? `${hh}:${mi}`
+    : trendHours <= 24 ? `${hh}时` : `${mm}/${dd} ${hh}时`;
+};
+
+async function loadTrend() {
+  try {
+    const r = await fetch("/api/trend?hours=" + trendHours);
+    const d = await r.json();
+    const labels = (d.buckets || []).map(b => fmtHb(b.b));
+    if (!labels.length) {
+      $("trendWindows").innerHTML = '<li class="empty">暂无数据分析（历史数据入库中）</li>';
+      return;
+    }
+    const lat = d.buckets.map(b => b.latency);
+    const loss = d.buckets.map(b => b.loss);
+    const down = d.buckets.map(b => b.down);
+    const up = d.buckets.map(b => b.up);
+
+    if (!trendLatChart) {
+      trendLatChart = new Chart($("trendLatChart"), {
+        type: "line",
+        data: {
+          labels,
+          datasets: [
+            { label: "平均延迟(ms)", data: lat, borderColor: "#22c55e",
+              backgroundColor: "rgba(34,197,94,0.1)", fill: true, borderWidth: 1.5, pointRadius: 0, tension: 0.3 },
+            { label: "丢包(%)", data: loss, borderColor: "#ef4444", backgroundColor: "transparent",
+              borderWidth: 1.5, pointRadius: 0, tension: 0.3 },
+          ],
+        },
+        options: {
+          animation: false, responsive: true, maintainAspectRatio: false,
+          scales: { x: { ticks: { maxTicksLimit: 12 } }, y: { beginAtZero: true } },
+          plugins: { legend: { labels: { boxWidth: 10, boxHeight: 10 } } },
+        },
+      });
+    } else {
+      trendLatChart.data.labels = labels;
+      trendLatChart.data.datasets[0].data = lat;
+      trendLatChart.data.datasets[1].data = loss;
+      trendLatChart.update();
+    }
+
+    if (!trendTrafficChart) {
+      trendTrafficChart = new Chart($("trendTrafficChart"), {
+        type: "line",
+        data: {
+          labels,
+          datasets: [
+            { label: "下载", data: down, borderColor: "#38bdf8", backgroundColor: "rgba(56,189,248,0.12)", fill: true, borderWidth: 1.5, pointRadius: 0, tension: 0.3 },
+            { label: "上传", data: up, borderColor: "#a78bfa", backgroundColor: "rgba(167,139,250,0.1)", fill: true, borderWidth: 1.5, pointRadius: 0, tension: 0.3 },
+          ],
+        },
+        options: {
+          animation: false, responsive: true, maintainAspectRatio: false,
+          scales: { x: { ticks: { maxTicksLimit: 12 } }, y: { ticks: { callback: v => fmtSpeed(v) }, beginAtZero: true } },
+          plugins: { legend: { labels: { boxWidth: 10, boxHeight: 10 } } },
+        },
+      });
+    } else {
+      trendTrafficChart.data.labels = labels;
+      trendTrafficChart.data.datasets[0].data = down;
+      trendTrafficChart.data.datasets[1].data = up;
+      trendTrafficChart.update();
+    }
+
+    const winHtml = (d.windows || []).map(w =>
+      `<li><b class="text-red">▍不稳定</b> ${fmtTime(w.start)} ~ ${fmtTime(w.end)}
+        · 峰值丢包 ${w.max_loss}% · 峰值延迟 ${w.max_latency}ms
+        · 平均 ${w.avg_latency}ms</li>`).join("");
+    const wsig = "w" + (d.windows || []).length + ":" + winHtml.length;
+    if (wsig !== $("trendWindows").dataset.last) {
+      $("trendWindows").dataset.last = wsig;
+      $("trendWindows").innerHTML = winHtml ||
+        '<li class="empty">所选范围内未检测到不稳定时段</li>';
+    }
+  } catch (e) { /* retry */ }
+}
+
+async function loadDailyReport() {
+  try {
+    const r = await fetch("/api/daily-report");
+    const d = await r.json();
+    $("reportDate").textContent = "· " + d.date;
+    const causeName = {
+      disconnect: "连接中断", high_loss: "丢包严重", jitter: "抖动大", high_latency: "延迟高",
+      route_change: "路由变更", path_loss: "路径丢包", dns: "DNS异常", dns_server_bad: "DNS服务器异常",
+      conn_storm: "连接风暴", link_flap: "链路切换", link_speed_drop: "速率骤降",
+      congestion: "带宽拥塞", wifi_weak: "WiFi弱", nic_errors: "网卡错误", proxy_active: "代理接管",
+      cpu_high: "CPU过载", public_ip_changed: "出口IP变更", nic_hw: "网卡硬件", srv_issue: "目标服务异常",
+    };
+    const causes = (d.top_causes || []).map(c =>
+      `${causeName[c.cause] || c.cause}×${c.count}`).join("、") || "无";
+    const rows = [
+      ["采样秒数", d.sample_seconds],
+      ["今日平均延迟", d.avg_latency_ms + " ms"],
+      ["今日流量(累计)", d.total_down_gb + " GB（下载）"],
+      ["最差时段丢包", d.worst_loss_pct + " %"],
+      ["今日事件", `${d.events_today} 条（严重 ${d.high_events} 条）`],
+      ["高频原因", causes],
+    ];
+    const sig = JSON.stringify(rows);
+    if (sig !== $("dailyReport").dataset.last) {
+      $("dailyReport").dataset.last = sig;
+      $("dailyReport").innerHTML = rows.map(([k, v]) =>
+        `<div class="kv"><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join("");
+    }
+    const bad = (d.high_events || 0) > 0 || (d.worst_loss_pct || 0) >= 10;
+    $("reportDate").className = "muted " + (bad ? "text-red" : "text-green");
+  } catch (e) { /* retry */ }
+}
+
+document.querySelectorAll(".seg-btn").forEach(btn =>
+  btn.addEventListener("click", () => {
+    trendHours = parseFloat(btn.dataset.hours);
+    document.querySelectorAll(".seg-btn").forEach(b => b.classList.toggle("active", b === btn));
+    loadTrend();
+  }));
 
 /* ---------- WebSocket ---------- */
 let ws = null;

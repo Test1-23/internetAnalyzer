@@ -354,6 +354,20 @@ footer {
   color: var(--text);
 }
 
+/* ---------- 趋势分析 ---------- */
+.seg { display: flex; gap: 4px; background: #16233b; border-radius: 8px; padding: 3px; }
+.seg-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  padding: 5px 14px;
+  font-size: 12px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.seg-btn.active { background: var(--border); color: var(--text); }
+.seg-btn:hover { color: var(--text); }
+
 @media (max-width: 900px) {
   .panels { grid-template-columns: 1fr; }
   header { flex-wrap: wrap; }

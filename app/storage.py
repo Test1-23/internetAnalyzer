@@ -60,6 +60,14 @@ class Storage:
                     target TEXT PRIMARY KEY,
                     host TEXT, profile_json TEXT, ts REAL
                 );
+                CREATE TABLE IF NOT EXISTS history (
+                    ts INTEGER PRIMARY KEY,
+                    latency REAL, jitter REAL, loss REAL,
+                    down INTEGER, up INTEGER
+                );
+                CREATE TABLE IF NOT EXISTS meta (
+                    key TEXT PRIMARY KEY, value TEXT
+                );
             """)
             self._conn.commit()
 
@@ -193,6 +201,55 @@ class Storage:
             except Exception:
                 pass
         return out
+
+    def save_history_batch(self, rows):
+        with self._lock:
+            self._conn.executemany(
+                "INSERT OR IGNORE INTO history (ts, latency, jitter, loss, down, up) "
+                "VALUES (?,?,?,?,?,?)",
+                [(r["ts"], r["latency"], r["jitter"], r["loss_pct"],
+                  r["down_bps"], r["up_bps"]) for r in rows])
+            self._conn.commit()
+
+    def get_history_range(self, start_ts, end_ts, step):
+        bucket = f"(ts / {max(1, int(step) * 1000)})"
+        with self._lock:
+            rows = self._conn.execute(
+                f"SELECT {bucket} AS b, AVG(latency), AVG(jitter), AVG(loss), "
+                "AVG(down), AVG(up), COUNT(*) FROM history "
+                "WHERE ts >= ? AND ts <= ? GROUP BY b ORDER BY b",
+                (start_ts, end_ts)).fetchall()
+        return [{"b": r[0] * step * 1000, "latency": round(r[1] or 0, 1),
+                 "jitter": round(r[2] or 0, 1), "loss": round(r[3] or 0, 1),
+                 "down": int(r[4] or 0), "up": int(r[5] or 0), "n": r[6]}
+                for r in rows]
+
+    def history_ts_range(self):
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT MIN(ts), MAX(ts), COUNT(*) FROM history").fetchone()
+        return {"min_ts": row[0], "max_ts": row[1], "count": row[2]}
+
+    def get_meta(self, key):
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+        return row[0] if row else None
+
+    def set_meta(self, key, value):
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO meta (key, value) VALUES (?,?)",
+                (key, str(value)))
+            self._conn.commit()
+
+    def list_recent_events(self, days=7, limit=200):
+        cutoff = time.time() - days * 86400
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT ts, cause, severity, title FROM events "
+                "WHERE ts >= ? ORDER BY ts DESC LIMIT ?", (cutoff, limit)).fetchall()
+        return [{"ts": r[0], "cause": r[1], "severity": r[2], "title": r[3]} for r in rows]
 
     def close(self):
         with self._lock:

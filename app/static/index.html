@@ -23,6 +23,7 @@
     <button class="tab" data-tab="wifi">WiFi 环境</button>
     <button class="tab" data-tab="nodes">节点画像</button>
     <button class="tab" data-tab="deep">深度诊断</button>
+    <button class="tab" data-tab="trend">趋势分析</button>
   </nav>
   <div class="uptime">已运行 <span id="uptime">-</span></div>
 </header>
@@ -220,6 +221,34 @@
         <span class="muted">每25秒轮询分析一个目标 · 点击「重析」立即刷新</span>
       </div>
       <div id="srvCards" class="ap-grid"></div>
+    </div>
+  </section>
+</main>
+
+<main id="tab-trend" class="tab-page">
+  <section class="panels wide">
+    <div class="panel full">
+      <div class="row-between">
+        <h3>今日日均报告 <span class="muted" id="reportDate"></span></h3>
+        <div class="seg">
+          <button class="seg-btn active" data-hours="6">6小时</button>
+          <button class="seg-btn" data-hours="24">24小时</button>
+          <button class="seg-btn" data-hours="168">7天</button>
+        </div>
+      </div>
+      <div id="dailyReport" class="kv-list"></div>
+    </div>
+    <div class="panel full">
+      <h3>延迟 / 丢包趋势</h3>
+      <canvas id="trendLatChart"></canvas>
+    </div>
+    <div class="panel full">
+      <h3>流量变化</h3>
+      <canvas id="trendTrafficChart"></canvas>
+    </div>
+    <div class="panel full">
+      <h3>不稳定时段窗口</h3>
+      <ul id="trendWindows" class="plain-list"><li class="empty">选择时间范围查看…</li></ul>
     </div>
   </section>
 </main>

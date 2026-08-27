@@ -64,6 +64,7 @@ class NetworkMonitor:
         self.nic_err_rate = 0.0
         self._last_nic_err = None
         self._speed_drop_ts = None
+        self._low_streak = 0
         psutil.cpu_percent(interval=None)
         self.gateway = self._discover_gateway()
         self.nic = self._pick_active_nic() or "unknown"
@@ -237,9 +238,11 @@ class NetworkMonitor:
                 prev_speed = self.nic_speed
                 self.nic_speed = speed
                 if prev_speed and speed < prev_speed * 0.6:
-                    self._speed_drop_ts = now
-                elif prev_speed and speed >= prev_speed:
-                    pass
+                    self._low_streak += 1
+                    if self._low_streak >= 5:
+                        self._speed_drop_ts = now
+                else:
+                    self._low_streak = 0
             err_now = None
             if self.nic in pernic:
                 c = pernic[self.nic]

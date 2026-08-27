@@ -19,6 +19,7 @@ from .nodeprofiler import NodeProfiler
 from .pathmon import PathMonitor
 from .srvprobe import ServerProfiler
 from .storage import Storage
+from .trend import TrendAnalyzer
 from .wifienv import WifiEnv
 
 BASE = Path(__file__).resolve().parent
@@ -38,6 +39,7 @@ analyzer = Analyzer(monitor, storage=storage, netinfo=netinfo,
                     dnsprobe=dnsprobe, connmon=connmon, pathmon=pathmon,
                     nicdiag=nicdiag, srvprobe=srvprobe)
 attribution = Attribution(monitor, analyzer, pathmon, wifienv, connmon, netinfo)
+trend = TrendAnalyzer(monitor, storage)
 
 
 @asynccontextmanager
@@ -55,6 +57,7 @@ async def lifespan(app):
     srvprobe.start()
     analyzer.start()
     attribution.start()
+    trend.start()
     yield
     monitor.stop()
     netinfo.stop()
@@ -69,6 +72,7 @@ async def lifespan(app):
     srvprobe.stop()
     analyzer.stop()
     attribution.stop()
+    trend.stop()
 
 
 app = FastAPI(title="网络分析器", lifespan=lifespan)
@@ -172,6 +176,20 @@ def api_nic_diag():
 @app.get("/api/server-profiles")
 def api_server_profiles():
     return {"profiles": srvprobe.get_profiles()}
+
+
+@app.get("/api/trend")
+def api_trend(hours: float = 24):
+    hours = max(1.0, min(float(hours), 168))
+    return {
+        "buckets": trend.get_buckets(hours),
+        "windows": trend.find_windows(hours),
+    }
+
+
+@app.get("/api/daily-report")
+def api_daily_report():
+    return trend.daily_report()
 
 
 @app.post("/api/server-profile/{name}")
